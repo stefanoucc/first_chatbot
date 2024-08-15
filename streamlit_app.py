@@ -2,6 +2,22 @@ import streamlit as st
 import pandas as pd
 from openai import OpenAI
 
+# Constants for cost estimation
+COST_PER_1000_TOKENS = 0.03  # Adjust based on actual API pricing for your model
+BUDGET = 100.00  # Maximum budget in USD
+
+# Initialize total cost tracking in session state
+if "total_cost" not in st.session_state:
+    st.session_state.total_cost = 0.0
+
+# Function to estimate cost based on token usage
+def estimate_cost(tokens):
+    return (tokens / 1000) * COST_PER_1000_TOKENS
+
+# Function to get token count (mocked for this example)
+def get_token_count(text):
+    return len(text.split())  # Approximate token count by word count (adjust as necessary)
+
 # Show title and description.
 st.title("💬 Credit Risk Assistant")
 st.write(
@@ -31,7 +47,7 @@ else:
             prompt += "\n\nHere are the available datasets:\n"
             for name, df in dataframes.items():
                 prompt += f"- **{name}**: {', '.join(df.columns)}\n"
-            prompt += "\nYou can ask questions about these datasets or request Python code to execute on them."
+            prompt += "\nYou can ask questions about these datasets, and I will analyze them for you."
             return prompt
 
         # Create a session state variable to store the chat messages.
@@ -45,6 +61,17 @@ else:
 
         # Create a chat input field.
         if prompt := st.chat_input("Ask me anything about the data or calculations."):
+
+            # Estimate token usage and cost for this prompt
+            tokens_used = get_token_count(prompt)
+            cost = estimate_cost(tokens_used)
+            st.session_state.total_cost += cost
+
+            # Warn user if they are approaching or exceeding the budget
+            if st.session_state.total_cost > BUDGET:
+                st.warning(f"Warning: You have exceeded your budget of ${BUDGET}. Total estimated cost: ${st.session_state.total_cost:.2f}")
+            elif st.session_state.total_cost > BUDGET * 0.8:
+                st.warning(f"Alert: You are approaching your budget limit. Total estimated cost: ${st.session_state.total_cost:.2f}")
 
             # Store and display the current prompt.
             st.session_state.messages.append({"role": "user", "content": prompt})
@@ -65,7 +92,7 @@ else:
             - Performing calculations and generating graphs.
             - Interpreting and executing Python code to interact with provided DataFrames.
 
-            Whenever asked, you can directly execute Python code on the provided DataFrames.
+            Whenever asked, you should directly execute Python code on the provided DataFrames and return the results.
             """
 
             try:
@@ -93,11 +120,5 @@ else:
             except Exception as e:
                 st.error(f"An error occurred while generating the response: {e}")
 
-            # Allow user to execute Python code on the uploaded DataFrames
-            st.subheader("Run Python Code on DataFrames")
-            code_input = st.text_area("Enter Python code to execute on the DataFrames")
-            if st.button("Run Code"):
-                try:
-                    exec(code_input, {"df": dataframes})
-                except Exception as e:
-                    st.error(f"Error executing code: {e}")
+        # Display total cost so far
+        st.write(f"Total estimated cost: ${st.session_state.total_cost:.2f}")
