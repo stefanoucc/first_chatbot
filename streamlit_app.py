@@ -1,56 +1,103 @@
 import streamlit as st
+import pandas as pd
 from openai import OpenAI
 
 # Show title and description.
-st.title("💬 Chatbot")
+st.title("💬 Credit Risk Assistant")
 st.write(
-    "This is a simple chatbot that uses OpenAI's GPT-3.5 model to generate responses. "
-    "To use this app, you need to provide an OpenAI API key, which you can get [here](https://platform.openai.com/account/api-keys). "
-    "You can also learn how to build this app step by step by [following our tutorial](https://docs.streamlit.io/develop/tutorials/llms/build-conversational-apps)."
+    "This chatbot uses GPT-4o mini to assist with credit risk analysis. "
+    "It can analyze datasets, perform calculations, generate graphs, and more."
 )
 
-# Ask user for their OpenAI API key via `st.text_input`.
-# Alternatively, you can store the API key in `./.streamlit/secrets.toml` and access it
-# via `st.secrets`, see https://docs.streamlit.io/develop/concepts/connections/secrets-management
+# Ask user for their OpenAI API key.
 openai_api_key = st.text_input("OpenAI API Key", type="password")
 if not openai_api_key:
     st.info("Please add your OpenAI API key to continue.", icon="🗝️")
 else:
-
     # Create an OpenAI client.
     client = OpenAI(api_key=openai_api_key)
 
-    # Create a session state variable to store the chat messages. This ensures that the
-    # messages persist across reruns.
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
+    # Upload CSV files.
+    uploaded_files = st.file_uploader("Upload your CSV files", type="csv", accept_multiple_files=True)
+    if uploaded_files:
+        dataframes = {file.name: pd.read_csv(file) for file in uploaded_files}
+        st.write("Uploaded CSV files:")
+        for filename, df in dataframes.items():
+            st.write(f"**{filename}**:")
+            st.dataframe(df.head())
 
-    # Display the existing chat messages via `st.chat_message`.
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+        # Function to generate the prompt with data.
+        def generate_prompt(prompt, dataframes):
+            prompt += "\n\nHere are the available datasets:\n"
+            for name, df in dataframes.items():
+                prompt += f"- **{name}**: {', '.join(df.columns)}\n"
+            prompt += "\nYou can ask questions about these datasets or request Python code to execute on them."
+            return prompt
 
-    # Create a chat input field to allow the user to enter a message. This will display
-    # automatically at the bottom of the page.
-    if prompt := st.chat_input("What is up?"):
+        # Create a session state variable to store the chat messages.
+        if "messages" not in st.session_state:
+            st.session_state.messages = []
 
-        # Store and display the current prompt.
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
+        # Display the existing chat messages.
+        for message in st.session_state.messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
 
-        # Generate a response using the OpenAI API.
-        stream = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": m["role"], "content": m["content"]}
-                for m in st.session_state.messages
-            ],
-            stream=True,
-        )
+        # Create a chat input field.
+        if prompt := st.chat_input("Ask me anything about the data or calculations."):
 
-        # Stream the response to the chat using `st.write_stream`, then store it in 
-        # session state.
-        with st.chat_message("assistant"):
-            response = st.write_stream(stream)
-        st.session_state.messages.append({"role": "assistant", "content": response})
+            # Store and display the current prompt.
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
+
+            # Generate the customized prompt for GPT.
+            custom_prompt = generate_prompt(prompt, dataframes)
+
+            # Enhanced system prompt with code interpretation capability
+            system_prompt = """
+            You are a Credit Risk Assistant embedded within an enterprise-grade browser for an equipment leasing business.
+            Your primary role is to assist credit analysts and credit managers by providing accurate and insightful responses 
+            to their queries related to credit originations and portfolio management.
+
+            Capabilities include:
+            - Accessing and analyzing application-level and contract-level datasets.
+            - Performing calculations and generating graphs.
+            - Interpreting and executing Python code to interact with provided DataFrames.
+
+            Whenever asked, you can directly execute Python code on the provided DataFrames.
+            """
+
+            try:
+                # Streamlined function to handle API call and response
+                def get_gpt_response(client, custom_prompt, model="gpt-4o-mini"):
+                    stream = client.chat.completions.create(
+                        model=model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": custom_prompt}
+                        ],
+                        stream=True,
+                        timeout=30  # Set a timeout for the API request
+                    )
+                    return stream
+
+                # Get the response stream from the API
+                stream = get_gpt_response(client, custom_prompt)
+
+                # Stream the response to the chat and store it in session state
+                with st.chat_message("assistant"):
+                    response = st.write_stream(stream)
+                st.session_state.messages.append({"role": "assistant", "content": response})
+
+            except Exception as e:
+                st.error(f"An error occurred while generating the response: {e}")
+
+            # Allow user to execute Python code on the uploaded DataFrames
+            st.subheader("Run Python Code on DataFrames")
+            code_input = st.text_area("Enter Python code to execute on the DataFrames")
+            if st.button("Run Code"):
+                try:
+                    exec(code_input, {"df": dataframes})
+                except Exception as e:
+                    st.error(f"Error executing code: {e}")
